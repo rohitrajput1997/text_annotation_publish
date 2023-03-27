@@ -30,40 +30,16 @@ interface Blend extends Split {
 interface Meta {
   color?: string;
   index?: number;
-  tag?: string;
 }
 
 interface NonBlend {
   outRanges: number[][];
   metaData: Meta[];
+  currentTags: Tag[];
 }
 
 export const focusOverlap = (baseTag: Tag, splits: Array<Tag>) => {
   const valA = baseTag;
-  let a1: Blend[] = [];
-  if (valA.color) {
-    let tagList: string[] = [];
-    let colorList: string[] = [];
-
-    splits?.forEach((a,index) => {
-      if (a.tag&&a.color) {
-        tagList.push(a.tag);
-        if(index!==0){
-          colorList.push(a.color)
-        }
-       
-      }
-    });
-    a1.push({
-      start: valA.start,
-      end: valA.end,
-      color: blend(valA.color, colorList.join(", ")),
-   
-      tag: tagList.join(", "),
-    });
-    return a1;
-  }
-
   const overlap = splits
     .map((valB) => {
       if (valA.color) {
@@ -73,21 +49,11 @@ export const focusOverlap = (baseTag: Tag, splits: Array<Tag>) => {
           valA.end - valB.start > 0 &&
           valB.color
         ) {
-          let tagList: string[] = [];
-          let colorList: string[] = [];
-          splits?.forEach((a,index) => {
-            if (a.tag&&a.color) {
-              tagList.push(a.tag);
-              if(index!==0){
-                colorList.push(a.color)
-              }
-            }
-          });
           return {
             start: valB.start,
             end: valA.end,
-            color: blend(valA.color, colorList.join(", ")),
-            tag: tagList,
+            color: blend(valA.color, valB.color),
+            tag: valB.tag,
           };
         } else if (
           valA.end >= valB.start &&
@@ -109,7 +75,6 @@ export const focusOverlap = (baseTag: Tag, splits: Array<Tag>) => {
       }
     })
     .filter((val): val is Blend => !!val);
-
   return overlap;
 };
 
@@ -122,24 +87,8 @@ export const getOverlap = (splits: Array<Tag>) => {
 
   while (counter < splitLen) {
     const compTag = localTags.shift();
-    const c = splits.filter(
-      (a) => a.start === compTag?.start && a.end === compTag.end
-    );
 
-    counter = counter + c.length - 1;
-    compTag && c.length > 1 && result.push(...focusOverlap(compTag, c));
-    c.forEach((c) => {
-      const index = localTags.findIndex(
-        (s) =>
-          s.start === c.start &&
-          s.end === c.end &&
-          s.tag === c.tag &&
-          s.text === c.text
-      );
-      if (index !== -1) {
-        localTags.splice(index, 1);
-      }
-    });
+    compTag && result.push(...focusOverlap(compTag, localTags));
     counter++;
   }
 
@@ -244,7 +193,6 @@ const updateIndices = (splits: Array<Tag>, blend: Array<Tag>) => {
         metaIndex.push(i.__index__);
         metaData.push({
           color: i.color,
-          tag: i.tag,
         });
         return tagRange;
       } else if (semiInclusive && totalInclusive) {
@@ -376,6 +324,7 @@ const tagFilter = (tags: NonBlend) => {
       ...tagMeta,
       start: Math.min(...tag),
       end: Math.max(...tag),
+      tag: tags.currentTags.find((c) => c.end === Math.max(...tag))?.tag,
     }));
   });
   return filterSet.filter((tag) => isFinite(tag.start) || isFinite(tag.end));
@@ -384,7 +333,7 @@ const tagFilter = (tags: NonBlend) => {
 export const blender = (tags: Array<Tag>) => {
   const currentTags = sortBy(tags, ["start"]);
 
-  const overlap = getOverlap(currentTags);
+  let overlap = getOverlap(currentTags);
 
   if (overlap.length) {
     const { outRanges, metaData, tagIndices } = updateIndices(
@@ -392,14 +341,127 @@ export const blender = (tags: Array<Tag>) => {
       overlap
     );
 
-    const outTags = tagFilter({ outRanges, metaData });
+    const outTags = tagFilter({ outRanges, metaData, currentTags });
 
     const remainder = currentTags.filter(
       (_, index) => !tagIndices.includes(index)
     );
- 
+
+    tags.forEach((tag) => delete tag["__index__"]);
+    overlap = overlap.filter(
+      (d, index, self) =>
+        index ===
+        self.findIndex(
+          (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
+        )
+    );
+    let array: Tag[] = [];
+    if (currentTags.length === 0) {
+      overlap = [];
+    }
+
+    [...overlap, ...currentTags]
+      .filter(
+        (d, index, self) =>
+          index ===
+          self.findIndex(
+            (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
+          )
+      )
+      .sort((a, b) => a.end - b.end)
+      .forEach((a1, index) => {
+        if (index === 0) {
+          array.push(a1);
+          return;
+        }
+        let lastvalue = array[array.length - 1];
+        if (lastvalue.start < a1.start) {
+          array.push(a1);
+        } else {
+          array.push({
+            ...a1,
+            start: lastvalue.end,
+          });
+        }
+      });
+    array = array.filter(
+      (d, index, self) =>
+        index ===
+        self.findIndex(
+          (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
+        )
+    );
+    let array1: Tag[] = [];
+    [...array, ...outTags, ...remainder]
+      .sort((a, b) => a.end - b.end)
+      .forEach((a1, index) => {
+        if (index === 0) {
+          array1.push(a1);
+          return;
+        }
+        let lastvalue = array1[array1.length - 1];
+        if (
+          lastvalue.start < a1.start &&
+          lastvalue.end >= a1.end &&
+          lastvalue.tag === a1.tag
+        ) {
+          return;
+        }
+        if (a1.start <= lastvalue.end) {
+          array1.push({
+            ...a1,
+            start: lastvalue.end,
+          });
+        } else if (lastvalue.start < a1.start) {
+          array1.push(a1);
+        } else {
+          array1.push({
+            ...a1,
+            start: lastvalue.end,
+          });
+        }
+      });
+    array1 = array1.filter(
+      (d, index, self) =>
+        index ===
+        self.findIndex(
+          (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
+        )
+    );
+
+    let finalArr: Tag[] = [];
+    let indexArr: number[] = [];
+    array1.forEach((a1, i) => {
+      const index = array1.findIndex(
+        (a2) => a2.end === a1.end && a2.tag === a1.tag
+      );
+      const sameStringIndex = array1.findIndex(
+        (a2) => a1.start === a2.end && a2.tag === a1.tag
+      );
+
+      if (sameStringIndex !== -1 && sameStringIndex !== i) {
+        if (
+          array1[sameStringIndex].end - array1[sameStringIndex].start >
+          a1.end - a1.start
+        ) {
+          indexArr.push(i);
+        } else {
+          indexArr.push(sameStringIndex);
+
+          if (sameStringIndex < i) {
+            finalArr.splice(sameStringIndex, 1);
+          }
+        }
+      }
+      if (i !== index && index !== -1) {
+        indexArr.push(index);
+      }
+      if (indexArr.indexOf(i) === -1) {
+        finalArr.push(a1);
+      }
+    });
     return {
-      tags: [...overlap, ...outTags, ...remainder],
+      tags: [...finalArr],
       blendIndices: tagIndices,
     };
   } else return { tags: currentTags, blendIndices: [] };
