@@ -35,7 +35,6 @@ interface Meta {
 interface NonBlend {
   outRanges: number[][];
   metaData: Meta[];
-  currentTags: Tag[];
 }
 
 export const focusOverlap = (baseTag: Tag, splits: Array<Tag>) => {
@@ -53,7 +52,6 @@ export const focusOverlap = (baseTag: Tag, splits: Array<Tag>) => {
             start: valB.start,
             end: valA.end,
             color: blend(valA.color, valB.color),
-            tag: valB.tag,
           };
         } else if (
           valA.end >= valB.start &&
@@ -75,6 +73,7 @@ export const focusOverlap = (baseTag: Tag, splits: Array<Tag>) => {
       }
     })
     .filter((val): val is Blend => !!val);
+
   return overlap;
 };
 
@@ -84,11 +83,9 @@ export const getOverlap = (splits: Array<Tag>) => {
 
   let result: Blend[] = [];
   let counter = 0;
-
   while (counter < splitLen) {
     const compTag = localTags.shift();
-
-    compTag && result.push(...focusOverlap(compTag, localTags));
+    compTag && result.push(...focusOverlap(compTag, [...localTags]));
     counter++;
   }
 
@@ -324,7 +321,6 @@ const tagFilter = (tags: NonBlend) => {
       ...tagMeta,
       start: Math.min(...tag),
       end: Math.max(...tag),
-      tag: tags.currentTags.find((c) => c.end === Math.max(...tag))?.tag,
     }));
   });
   return filterSet.filter((tag) => isFinite(tag.start) || isFinite(tag.end));
@@ -333,136 +329,187 @@ const tagFilter = (tags: NonBlend) => {
 export const blender = (tags: Array<Tag>) => {
   const currentTags = sortBy(tags, ["start"]);
 
-  let overlap = getOverlap(currentTags);
+  let a1: Tag[] = [];
+  currentTags.forEach((s) => {
+    const index = a1.findIndex((a) => a.start === s.start && a.end === s.end);
+    if (index !== -1) {
+      a1[index].tag = `${a1[index].tag}`;
+      a1[index].color = blend(a1[index].color || "", s.color || "");
+      a1.push({
+        ...s,
+        start: a1[index].end,
+        end: a1[index].end, 
+      })
+    } else {
+      a1.push({ ...s });
+    }
+    
+  });
+  let arrDatta: Tag[] = [];
+  a1.forEach((e) => {
+    arrDatta = finalArrCreate(e, arrDatta);
+  });
+  const overlap = getOverlap(currentTags).filter(
+    (d, index, self) =>
+      index ===
+      self.findIndex(
+        (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
+      )
+  );
 
   if (overlap.length) {
-    const { outRanges, metaData, tagIndices } = updateIndices(
+    const { tagIndices } = updateIndices(
       currentTags,
       overlap
     );
 
-    const outTags = tagFilter({ outRanges, metaData, currentTags });
+    // const outTags = tagFilter({ outRanges, metaData });
 
-    const remainder = currentTags.filter(
-      (_, index) => !tagIndices.includes(index)
-    );
+    // const remainder = currentTags.filter(
+    //   (_, index) => !tagIndices.includes(index)
+    // );
 
     tags.forEach((tag) => delete tag["__index__"]);
-    overlap = overlap.filter(
-      (d, index, self) =>
-        index ===
-        self.findIndex(
-          (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
-        )
-    );
-    let array: Tag[] = [];
-    if (currentTags.length === 0) {
-      overlap = [];
-    }
 
-    [...overlap, ...currentTags]
-      .filter(
-        (d, index, self) =>
-          index ===
-          self.findIndex(
-            (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
-          )
-      )
-      .sort((a, b) => a.end - b.end)
-      .forEach((a1, index) => {
-        if (index === 0) {
-          array.push(a1);
-          return;
-        }
-        let lastvalue = array[array.length - 1];
-        if (lastvalue.start < a1.start) {
-          array.push(a1);
-        } else {
-          array.push({
-            ...a1,
-            start: lastvalue.end,
-          });
-        }
-      });
-    array = array.filter(
-      (d, index, self) =>
-        index ===
-        self.findIndex(
-          (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
-        )
-    );
-    let array1: Tag[] = [];
-    [...array, ...outTags, ...remainder]
-      .sort((a, b) => a.end - b.end)
-      .forEach((a1, index) => {
-        if (index === 0) {
-          array1.push(a1);
-          return;
-        }
-        let lastvalue = array1[array1.length - 1];
-        if (
-          lastvalue.start < a1.start &&
-          lastvalue.end >= a1.end &&
-          lastvalue.tag === a1.tag
-        ) {
-          return;
-        }
-        if (a1.start <= lastvalue.end) {
-          array1.push({
-            ...a1,
-            start: lastvalue.end,
-          });
-        } else if (lastvalue.start < a1.start) {
-          array1.push(a1);
-        } else {
-          array1.push({
-            ...a1,
-            start: lastvalue.end,
-          });
-        }
-      });
-    array1 = array1.filter(
-      (d, index, self) =>
-        index ===
-        self.findIndex(
-          (t) => t.end === d.end && t.start === d.start && t.tag === d.tag
-        )
-    );
-
-    let finalArr: Tag[] = [];
-    let indexArr: number[] = [];
-    array1.forEach((a1, i) => {
-      const index = array1.findIndex(
-        (a2) => a2.end === a1.end && a2.tag === a1.tag
-      );
-      const sameStringIndex = array1.findIndex(
-        (a2) => a1.start === a2.end && a2.tag === a1.tag
-      );
-
-      if (sameStringIndex !== -1 && sameStringIndex !== i) {
-        if (
-          array1[sameStringIndex].end - array1[sameStringIndex].start >
-          a1.end - a1.start
-        ) {
-          indexArr.push(i);
-        } else {
-          indexArr.push(sameStringIndex);
-
-          if (sameStringIndex < i) {
-            finalArr.splice(sameStringIndex, 1);
-          }
-        }
-      }
-      if (i !== index && index !== -1) {
-        indexArr.push(index);
-      }
-      if (indexArr.indexOf(i) === -1) {
-        finalArr.push(a1);
-      }
-    });
     return {
-      tags: [...finalArr],
+      tags: [...arrDatta],
       blendIndices: tagIndices,
     };
   } else return { tags: currentTags, blendIndices: [] };
+};
+
+const finalArrCreate = (currentTags: Tag, arr: Tag[]) => {
+  if (arr.length === 0) {
+    arr.push(currentTags);
+    return arr;
+  }
+  let lastObject = currentTags;
+  let finalArr: Tag[] = [];
+  let count = 0;
+  for (let i = 0; i < arr.length; i++) {
+    if (lastObject.start === arr[i].start && lastObject.end !== arr[i].end) {
+      count = count + 1;
+      finalArr.push({
+        start: lastObject.start,
+        end: lastObject.end > arr[i].end ? arr[i].end : lastObject.end,
+        tag: lastObject.end > arr[i].end ? arr[i].tag : lastObject.tag,
+        color: blend(lastObject.color || "", arr[i].color || ""),
+      });
+      const nextObject = arr[i + 1];
+      if (nextObject && nextObject.start < lastObject.end) {
+        if (nextObject.end > lastObject.end) {
+          arr[i + 1].start = lastObject.end;
+          finalArr.push({
+            start: lastObject.end > arr[i].end ? arr[i].end : lastObject.end,
+            end: lastObject.end < arr[i].end ? arr[i].end : lastObject.end,
+            tag: lastObject.end < arr[i].end ? arr[i].tag : lastObject.tag,
+            color: lastObject.color,
+          });
+        } else {
+          finalArr.push({
+            start: nextObject.end,
+            end: lastObject.end,
+            tag: lastObject.tag,
+            color: lastObject.color,
+          });
+        }
+      } else {
+        finalArr.push({
+          start: lastObject.end > arr[i].end ? arr[i].end : lastObject.end,
+          end: lastObject.end < arr[i].end ? arr[i].end : lastObject.end,
+          tag: lastObject.end < arr[i].end ? arr[i].tag : lastObject.tag,
+          color: lastObject.end < arr[i].end ? arr[i].color : lastObject.color,
+        });
+      }
+    } else if (
+      lastObject.start > arr[i].start &&
+      lastObject.end <= arr[i].end
+    ) {
+      count = count + 1;
+      finalArr.push({
+        start: arr[i].start,
+        end: lastObject.start,
+        tag: undefined,
+        color: arr[i].color,
+      });
+      finalArr.push({
+        start: lastObject.start,
+        end: lastObject.end,
+        tag:
+          lastObject.end === arr[i].end
+            ? `${arr[i].tag}`
+            : lastObject.tag,
+        color: blend(lastObject.color || "", arr[i].color || ""),
+      });
+      if(lastObject.end === arr[i].end) {
+        finalArr.push({
+          start: lastObject.end,
+          end: lastObject.end,
+          tag:`${lastObject.tag}`,
+          color: lastObject.color || "",
+        });
+      }
+      
+      if (lastObject.end !== arr[i].end) {
+        finalArr.push({
+          start: lastObject.end,
+          end: arr[i].end,
+          tag: arr[i].tag,
+          color: arr[i].color,
+        });
+      }
+    } else if (
+      lastObject.start > arr[i].start &&
+      lastObject.start < arr[i].end &&
+      lastObject.end > arr[i].end
+    ) {
+      count = count + 1;
+      finalArr.push({
+        start: arr[i].start,
+        end: lastObject.start,
+        tag: undefined,
+        color: arr[i].color,
+      });
+      finalArr.push({
+        start: lastObject.start,
+        end: arr[i].end,
+        tag: arr[i].tag,
+        color: blend(lastObject.color || "", arr[i].color || ""),
+      });
+      finalArr.push({
+        start: arr[i].end,
+        end: lastObject.end,
+        tag: lastObject.tag,
+        color: blend(lastObject.color || "", arr[i].color || ""),
+      });
+      if (arr.length >= i + 1 && arr[i + 1]) {
+        arr[i + 1].start = lastObject.end;
+      }
+    } else if (
+      lastObject.start === arr[i].start &&
+      lastObject.end === arr[i].end
+    ) {
+      count = count + 1;
+      finalArr[i] = {
+        start: arr[i].start,
+        end: arr[i].end,
+        tag: `${arr[i].tag}`,
+        color: blend(lastObject.color || "", arr[i].color || ""),
+      };
+      finalArr.push({
+        start: arr[i].end,
+        end: arr[i].end,
+        tag: `${lastObject.tag}`,
+        color: lastObject.color,
+      })
+
+    } else {
+      finalArr.push(arr[i]);
+    }
+  }
+  if (count === 0) {
+    finalArr.push(currentTags);
+  }
+  arr = finalArr;
+  return finalArr;
 };

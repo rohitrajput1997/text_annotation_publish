@@ -1,6 +1,6 @@
 {
   "name": "ns_work_flow_text_blend",
-  "version": "0.0.1",
+  "version": "0.0.10",
   "description": "React component for interactive blended text marking",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
